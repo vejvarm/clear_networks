@@ -3,14 +3,16 @@ import tensorflow_datasets as tfds
 import tensorflow as tf
 
 from helpers import console_logger, plot_graphs
-from Models import GRUModel
+from Models import RNNClassifier
 
 
 LOGGER = console_logger("tensorflow", "DEBUG")
+DEBUG = False
 
 BUFFER_SIZE = 10000
 BATCH_SIZE = 64
 
+RNN_TYPE = "cudnngru"
 LAYER_SIZES = (32, 16, 8)
 
 OPTIMIZER = tf.keras.optimizers.Adam(learning_rate=1e-4)
@@ -18,6 +20,9 @@ LOSS = tf.keras.losses.BinaryCrossentropy(from_logits=True)
 METRICS = ['accuracy']
 
 EPOCHS = 10
+LOG_WEIGHTS_PERIOD = 10
+LOG_GRADIENTS_PERIOD = 0
+LAYER_INDEX_NAME_DICT = None  # defaults to what is implemented in the RNNClassifier class
 
 
 def load_imdb_dataset():
@@ -60,15 +65,20 @@ if __name__ == '__main__':
     LOGGER.debug(f"decoded_string: {decoded_string}")
     assert original_string == decoded_string, "Original and decoded string don't match!"
 
-
     LOGGER.info("Preparing data for training.")
     train_dataset = (train_dataset
                      .shuffle(BUFFER_SIZE)
                      .padded_batch(BATCH_SIZE, padded_shapes=((None, ), tuple())))
     test_dataset = test_dataset.padded_batch(BATCH_SIZE, padded_shapes=((None, ), tuple()))
 
+    if DEBUG:
+        LOGGER.info("Take only part of the datasets for debugging.")
+        train_dataset = train_dataset.take(20)
+        test_dataset = test_dataset.take(10)
+
     LOGGER.info("Initializing GRU-RNN model.")
-    model = GRUModel(encoder.vocab_size, LAYER_SIZES)
+    model = RNNClassifier(encoder.vocab_size, RNN_TYPE, LAYER_SIZES, LOG_WEIGHTS_PERIOD,
+                          LOG_GRADIENTS_PERIOD, LAYER_INDEX_NAME_DICT)
 
     LOGGER.info("Compiling the model.")
     model.compile(OPTIMIZER, LOSS, METRICS)
@@ -81,9 +91,9 @@ if __name__ == '__main__':
     LOGGER.debug(f"model: {model.summary()}")
 
     LOGGER.info("Evaluating the model on IMDB REVIEWS testing dataset.")
-    test_loss, test_acc = model.evaluate(test_dataset)
-    LOGGER.info(f"Test Loss: {test_loss}")
-    LOGGER.info(f"Test Accuracy: {test_acc}")
+    metrics = model.evaluate(test_dataset)
+    LOGGER.info(f"Test Loss: {metrics[0]}")
+    LOGGER.info(f"Test Accuracy: {metrics[1]}")
 
     LOGGER.info("Predicting sample text with trained model.")
     sample_pred_text = ("""The movie was cool. The animation and the graphics were out of this world. I would 
