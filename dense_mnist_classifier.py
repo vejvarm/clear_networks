@@ -20,8 +20,7 @@ LOSS = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
 METRICS = ['accuracy']
 
 EPOCHS = 5
-LOG_WEIGHTS_PERIOD = 100
-LOG_GRADIENTS_PERIOD = 100
+LOG_PERIOD = 100
 LAYER_INDEX_NAME_DICT = None  # defaults to what is implemented in the DenseClassifier class
 
 if __name__ == '__main__':
@@ -54,8 +53,7 @@ if __name__ == '__main__':
     ds_val = ds_val.batch(BATCH_SIZE)
 
     LOGGER.info("Initialize Dense classifier model.")
-    model = DenseClassifier(image_shape, HIDDEN_SIZE, NUM_CLASSES, LOG_WEIGHTS_PERIOD,
-                            LOG_GRADIENTS_PERIOD, LAYER_INDEX_NAME_DICT)
+    model = DenseClassifier(image_shape, HIDDEN_SIZE, NUM_CLASSES, LOG_PERIOD, LAYER_INDEX_NAME_DICT)
 
     LOGGER.info("Compile model.")
     model.compile(OPTIMIZER, LOSS, METRICS)

@@ -1,4 +1,5 @@
-from abc import ABC
+# TODO: global extreme normalization
+# TODO: saving weights and gradients structures to files
 from typing import Tuple, Dict, Optional
 
 import tensorflow as tf
@@ -18,24 +19,20 @@ class BaseModel(Model):
     LayerInfo = Tuple[LayerName, ParamType]
     LayerIndexNameDict = Optional[Dict[LayerIndex, LayerInfo]]  # either Dict or None
 
-    def __init__(self, log_weights_period: int, log_gradients_period: int, layer_index_name_dict: LayerIndexNameDict):
+    def __init__(self, log_period: int, layer_index_name_dict: LayerIndexNameDict):
         """ Base model class for a clear network
 
-        :param log_weights_period (int): Period (in batches) at which to log weight values to files (0 == no logging)
-        :param log_gradients_period (int): Period (in batches) at which to log grad values to files (0 == no logging)
+        :param log_period (int): Period (in batches) for logging log weight and gradient values to files (0 == off)
         :param layer_index_name_dict (Opt[Dict[int: Tuple[str, str]]]): Dictionary of layers for logging
         """
         super(BaseModel, self).__init__()
 
-        self.log_weights_period = log_weights_period
-        self.log_gradients_period = log_gradients_period
+        self.log_period = log_period
         self.layer_index_name_dict = layer_index_name_dict
+        self.num_logged_layers = len(self.layer_index_name_dict)
 
-        # self.gradients = tf.Variable(tf.zeros(shape=(32, 48)), shape=(32, 48), dtype=tf.float32)
-        if self.log_weights_period:
-            self.weights_summary = tf.summary.create_file_writer("./log/weights/")
-        if self.log_gradients_period:
-            self.gradients_summary = tf.summary.create_file_writer("./log/gradients/")
+        if self.log_period:
+            self.w_and_g_summary = tf.summary.create_file_writer("./log/")
 
     def train_step(self, data):
         """The logic for one training step.
@@ -70,16 +67,11 @@ class BaseModel(Model):
         trainable_variables = self.trainable_variables
         gradients = tape.gradient(loss, trainable_variables)
 
-        # TODO: automate shape inference for all layers to make structures for gradients
-        # TODO: maybe use metrics for the gradients instead?
-        if self.log_weights_period:
-            tf.cond(tf.cast(step % self.log_weights_period, tf.bool),
+        # TODO: save weights and gradients to files
+        if self.log_period:
+            tf.cond(tf.cast(step % self.log_period, tf.bool),
                     true_fn=lambda: None,
-                    false_fn=lambda: _log_weights(self.weights_summary, self.weights, step, self.layer_index_name_dict))
-        if self.log_gradients_period:
-            tf.cond(tf.cast(step % self.log_gradients_period, tf.bool),
-                    true_fn=lambda: None,
-                    false_fn=lambda: _log_weights(self.gradients_summary, gradients, step, self.layer_index_name_dict))
+                    false_fn=lambda: self._log_w_and_g(self.weights, gradients, step))
 
         self.optimizer.apply_gradients(zip(gradients, trainable_variables))
         # The _minimize call does a few extra steps unnecessary in most cases,
@@ -89,19 +81,61 @@ class BaseModel(Model):
         self.compiled_metrics.update_state(y, y_pred, sample_weight)
         return {m.name: m.result() for m in self.metrics}
 
+    def _log_w_and_g(self, weights_list, gradients_list, step):
+        """
+            R = positive gradient (0. = no positive gradient, 1. = highest positive gradient)
+            G = unused, zeroed out
+            B = negative gradient (0. = no negative gradient, 1. = highest negative gradient)
+            A = weight value (0. = fully transparent, 1. = fully opaque)
+
+        :param weights_list:
+        :param gradients_list:
+        :param step:
+        """
+        summary_writer = self.w_and_g_summary
+
+        for i, (name, ptype) in self.layer_index_name_dict.items():
+            w = weights_list[i]
+            g = gradients_list[i]
+
+            # normalize
+            # TODO: global normalization (how the hell)
+            w = (w - tf.reduce_min(w))/(tf.reduce_max(w) - tf.reduce_min(w))  # normalize to (0., 1.)
+            g = 2 * (g - tf.reduce_min(g))/(tf.reduce_max(g) - tf.reduce_min(g)) - 1  # normalize to (-1., 1.)
+
+            # split to negative and positive gradients
+            g_pos = tf.clip_by_value(g, 0, 1)
+            g_neg = tf.clip_by_value(g, -1, 0) * (-1)  # clip and change to positive values for B channel
+
+            # stack the g_pos, zeros, g_neg and w to form an R, G, B, A image
+            rgb = tf.stack((g_pos, tf.zeros_like(g_pos), g_neg, w), axis=-1)
+
+            if ptype == "w":
+                rgb = tf.expand_dims(rgb, 0)
+                rgb = tf.transpose(rgb, (0, 2, 1, 3))
+                with summary_writer.as_default():
+                    tf.summary.image(name + "_weight", rgb, step=step)
+            elif ptype == "b":
+                rgb = tf.expand_dims(tf.expand_dims(rgb, 0), 2)
+                rgb = tf.transpose(rgb, (0, 2, 1, 3))
+                with summary_writer.as_default():
+                    tf.summary.image(name + "_bias", rgb, step=step)
+            else:
+                raise NotImplemented("Parameter type must be either 'w' (weight) or 'b' (bias)")
+        self.extremes_set = True
+
 
 class DenseClassifier(BaseModel):
 
     def __init__(self, input_shape: Tuple[int, int], hidden_size: int, num_classes: int,
-                 log_weights_period=0, log_gradients_period=0, layer_index_name_dict=None):
+                 log_period=0, layer_index_name_dict=None):
         """ Simple Dense Neural Network classifier with an input Flatten layer, hidden Dense layer
         and output Dense layer with Softmax output.
 
         :param input_shape (Tuple[int, int]): Shape of the input to the Flatten layer
         :param hidden_size (int): Number of units in hidden Dense layer
         :param num_classes (int): Number of units in output Dense layer (classes to classify)
-        :param log_weights_period (int): Period (in batches) at which to log weight values to files (0 == no logging)
-        :param log_gradients_period (int): Period (in batches) at which to log grad values to files (0 == no logging)
+        :param log_period (int): Period (in batches) at which to log weight values to files (0 == no logging)
         :param layer_index_name_dict (Opt[Dict[int: Tuple[str, str]]]): Dictionary of layers for logging
 
         layer weight and bias shapes:
@@ -115,8 +149,7 @@ class DenseClassifier(BaseModel):
                                      1: ("L1_Inp2Hid", "b"),
                                      2: ("L2_Hid2Out", "w"),
                                      3: ("L2_Hid2Out", "b")}
-        super(DenseClassifier, self).__init__(log_weights_period=log_weights_period,
-                                              log_gradients_period=log_gradients_period,
+        super(DenseClassifier, self).__init__(log_period=log_period,
                                               layer_index_name_dict=layer_index_name_dict)
 
         self.input_layer = Flatten(input_shape=input_shape)
@@ -136,14 +169,13 @@ class RNNClassifier(BaseModel):
     Sizes = Tuple[EmbeddingSize, RNNSize, DenseSize]
 
     def __init__(self, vocab_size: int, rnn_type: str, sizes: Sizes,
-                 log_weights_period=0, log_gradients_period=0, layer_index_name_dict=None):
+                 log_period=0, layer_index_name_dict=None):
         """ Simple RNN/GRU binary classifier with Embedding input and single sigmoid output
 
         :param vocab_size (int): Number of unique values in inputs (vocabulary size for embedding)
         :param rnn_type (str): RNN cell type (so far can be "SimpleRNN", "CuDNNGRU" or "GRU")
         :param sizes (Tuple[int, int, int]): Number of units in [Embedding, RNN, Dense_output]
-        :param log_weights_period (int): Period (in batches) at which to log weight values to files (0 == no logging)
-        :param log_gradients_period (int): Period (in batches) at which to log grad values to files (0 == no logging)
+        :param log_period (int): Period (in batches) at which to log weight values to files (0 == no logging)
         :param layer_index_name_dict (Opt[Dict[int: Tuple[str, str]]]): Dictionary of layers for logging
 
         embedding_size == sizes[0]
@@ -184,8 +216,7 @@ class RNNClassifier(BaseModel):
                 layer_index_name_dict[3] = ("L1_GRU_bz", "b")
             else:
                 raise NotImplementedError("RNN types other than 'SimpleRNN', 'CuDNNGRU' and 'GRU' are not supported.")
-        super(RNNClassifier, self).__init__(log_weights_period=log_weights_period,
-                                            log_gradients_period=log_gradients_period,
+        super(RNNClassifier, self).__init__(log_period=log_period,
                                             layer_index_name_dict=layer_index_name_dict)
 
         embedding_size, rnn_size, dense_size = sizes
@@ -215,23 +246,6 @@ class RNNClassifier(BaseModel):
         x = self.rnn(x, mask=mask)
         x = self.dense(x)
         return self.class_out(x)
-
-
-def _log_weights(summary_writer, weights_list, step, layer_index_name_dict):
-    for i, (name, ptype) in layer_index_name_dict.items():
-        w = weights_list[i]
-        # w = w - tf.reduce_min(w) / (tf.reduce_max(w) - tf.reduce_min(w))  # normalize to (0., 1.)
-        if ptype == "w":
-            w = tf.transpose(w, (1, 0))
-            w = tf.expand_dims(tf.expand_dims(w, 0), -1)
-            with summary_writer.as_default():
-                tf.summary.image(name+"_weight", w, step=step)
-        elif ptype == "b":
-            w = tf.expand_dims(tf.expand_dims(tf.expand_dims(w, 0), -1), -1)
-            with summary_writer.as_default():
-                tf.summary.image(name+"_bias", w, step=step)
-        else:
-            raise NotImplemented("Parameter type must be either 'w' (weight) or 'b' (bias)")
 
 
 def _minimize(strategy, tape, optimizer, loss, trainable_variables):

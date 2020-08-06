@@ -12,7 +12,7 @@ DEBUG = False
 BUFFER_SIZE = 10000
 BATCH_SIZE = 64
 
-RNN_TYPE = "cudnngru"
+RNN_TYPE = "GRU"
 LAYER_SIZES = (32, 16, 8)
 
 OPTIMIZER = tf.keras.optimizers.Adam(learning_rate=1e-4)
@@ -20,8 +20,7 @@ LOSS = tf.keras.losses.BinaryCrossentropy(from_logits=True)
 METRICS = ['accuracy']
 
 EPOCHS = 10
-LOG_WEIGHTS_PERIOD = 10
-LOG_GRADIENTS_PERIOD = 0
+LOG_PERIOD = 100
 LAYER_INDEX_NAME_DICT = None  # defaults to what is implemented in the RNNClassifier class
 
 
@@ -77,8 +76,7 @@ if __name__ == '__main__':
         test_dataset = test_dataset.take(10)
 
     LOGGER.info("Initializing GRU-RNN model.")
-    model = RNNClassifier(encoder.vocab_size, RNN_TYPE, LAYER_SIZES, LOG_WEIGHTS_PERIOD,
-                          LOG_GRADIENTS_PERIOD, LAYER_INDEX_NAME_DICT)
+    model = RNNClassifier(encoder.vocab_size, RNN_TYPE, LAYER_SIZES, LOG_PERIOD, LAYER_INDEX_NAME_DICT)
 
     LOGGER.info("Compiling the model.")
     model.compile(OPTIMIZER, LOSS, METRICS)
