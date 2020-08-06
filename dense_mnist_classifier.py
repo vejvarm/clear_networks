@@ -21,7 +21,7 @@ METRICS = ['accuracy']
 
 EPOCHS = 5
 LOG_WEIGHTS_PERIOD = 100
-LOG_GRADIENTS_PERIOD = 0
+LOG_GRADIENTS_PERIOD = 100
 LAYER_INDEX_NAME_DICT = None  # defaults to what is implemented in the DenseClassifier class
 
 if __name__ == '__main__':

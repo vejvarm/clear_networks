@@ -76,7 +76,11 @@ class BaseModel(Model):
             tf.cond(tf.cast(step % self.log_weights_period, tf.bool),
                     true_fn=lambda: None,
                     false_fn=lambda: _log_weights(self.weights_summary, self.weights, step, self.layer_index_name_dict))
-        # self.gradients = gradients[1]
+        if self.log_gradients_period:
+            tf.cond(tf.cast(step % self.log_gradients_period, tf.bool),
+                    true_fn=lambda: None,
+                    false_fn=lambda: _log_weights(self.gradients_summary, gradients, step, self.layer_index_name_dict))
+
         self.optimizer.apply_gradients(zip(gradients, trainable_variables))
         # The _minimize call does a few extra steps unnecessary in most cases,
         # such as loss scaling and gradient clipping.
@@ -216,7 +220,7 @@ class RNNClassifier(BaseModel):
 def _log_weights(summary_writer, weights_list, step, layer_index_name_dict):
     for i, (name, ptype) in layer_index_name_dict.items():
         w = weights_list[i]
-        w = w - tf.reduce_min(w) / (tf.reduce_max(w) - tf.reduce_min(w))  # normalize to (0., 1.)
+        # w = w - tf.reduce_min(w) / (tf.reduce_max(w) - tf.reduce_min(w))  # normalize to (0., 1.)
         if ptype == "w":
             w = tf.transpose(w, (1, 0))
             w = tf.expand_dims(tf.expand_dims(w, 0), -1)
