@@ -1,5 +1,7 @@
 # TODO: global extreme normalization
 # TODO: saving weights and gradients structures to files
+import os
+
 from typing import Tuple, Dict, Optional
 
 import tensorflow as tf
@@ -19,11 +21,12 @@ class BaseModel(Model):
     LayerInfo = Tuple[LayerName, ParamType]
     LayerIndexNameDict = Optional[Dict[LayerIndex, LayerInfo]]  # either Dict or None
 
-    def __init__(self, log_period: int, layer_index_name_dict: LayerIndexNameDict):
+    def __init__(self, log_period: int, layer_index_name_dict: LayerIndexNameDict, log_path: str):
         """ Base model class for a clear network
 
         :param log_period (int): Period (in batches) for logging log weight and gradient values to files (0 == off)
         :param layer_index_name_dict (Opt[Dict[int: Tuple[str, str]]]): Dictionary of layers for logging
+        :param log_path (str): Where to save the log and .proto files
         """
         super(BaseModel, self).__init__()
 
@@ -32,7 +35,8 @@ class BaseModel(Model):
         self.num_logged_layers = len(self.layer_index_name_dict)
 
         if self.log_period:
-            self.w_and_g_summary = tf.summary.create_file_writer("./log/")
+            self.w_and_g_summary = tf.summary.create_file_writer(log_path)
+            # self.w_and_g_writer = tf.io.TFRecordWriter(os.path.join(log_path, "wg.proto"))
 
     def train_step(self, data):
         """The logic for one training step.
@@ -93,6 +97,7 @@ class BaseModel(Model):
         :param step:
         """
         summary_writer = self.w_and_g_summary
+        wg_list = []
 
         for i, (name, ptype) in self.layer_index_name_dict.items():
             w = weights_list[i]
@@ -110,25 +115,45 @@ class BaseModel(Model):
             # stack the g_pos, zeros, g_neg and w to form an R, G, B, A image
             rgb = tf.stack((g_pos, tf.zeros_like(g_pos), g_neg, w), axis=-1)
 
+            # prepare for summary
             if ptype == "w":
                 rgb = tf.expand_dims(rgb, 0)
                 rgb = tf.transpose(rgb, (0, 2, 1, 3))
-                with summary_writer.as_default():
-                    tf.summary.image(name + "_weight", rgb, step=step)
+                fullname = name + "_weight"
             elif ptype == "b":
                 rgb = tf.expand_dims(tf.expand_dims(rgb, 0), 2)
                 rgb = tf.transpose(rgb, (0, 2, 1, 3))
-                with summary_writer.as_default():
-                    tf.summary.image(name + "_bias", rgb, step=step)
+                fullname = name + "_bias"
             else:
                 raise NotImplemented("Parameter type must be either 'w' (weight) or 'b' (bias)")
-        self.extremes_set = True
+            # write to summary
+            with summary_writer.as_default():
+                tf.summary.image(fullname, rgb, step=step)
+
+            # write to list for .proto file
+            wg_list.append((fullname, rgb))
+
+        # serialize and write to protobuf file
+        # TODO: do further testing (seems to not work with tensors)
+        # serialized = self._serialize_wg(wg_list, step)
+        # self.w_and_g_writer.write(serialized)
+
+    @staticmethod
+    def _serialize_wg(wg_list, step):
+        feature = {"step": tf.train.Feature(int64_list=tf.train.Int64List(value=[step]))}
+        for i, (fullname, wg) in enumerate(wg_list):
+            # encode into serialized string
+            wg_serial = tf.io.serialize_tensor(wg)  # decode with tf.io.parse_tensor
+            print(wg_serial)
+            feature[fullname] = tf.train.Feature(bytes_list=tf.train.BytesList(value=[wg_serial]))
+        example = tf.train.Example(features=tf.train.Features(feature=feature))
+        return example.SerializeToString()
 
 
 class DenseClassifier(BaseModel):
 
     def __init__(self, input_shape: Tuple[int, int], hidden_size: int, num_classes: int,
-                 log_period=0, layer_index_name_dict=None):
+                 log_period=0, layer_index_name_dict=None, log_path="./log"):
         """ Simple Dense Neural Network classifier with an input Flatten layer, hidden Dense layer
         and output Dense layer with Softmax output.
 
@@ -150,7 +175,8 @@ class DenseClassifier(BaseModel):
                                      2: ("L2_Hid2Out", "w"),
                                      3: ("L2_Hid2Out", "b")}
         super(DenseClassifier, self).__init__(log_period=log_period,
-                                              layer_index_name_dict=layer_index_name_dict)
+                                              layer_index_name_dict=layer_index_name_dict,
+                                              log_path=log_path)
 
         self.input_layer = Flatten(input_shape=input_shape)
         self.hidden_layer = Dense(hidden_size)
@@ -169,7 +195,7 @@ class RNNClassifier(BaseModel):
     Sizes = Tuple[EmbeddingSize, RNNSize, DenseSize]
 
     def __init__(self, vocab_size: int, rnn_type: str, sizes: Sizes,
-                 log_period=0, layer_index_name_dict=None):
+                 log_period=0, layer_index_name_dict=None, log_path="./log"):
         """ Simple RNN/GRU binary classifier with Embedding input and single sigmoid output
 
         :param vocab_size (int): Number of unique values in inputs (vocabulary size for embedding)
@@ -217,7 +243,8 @@ class RNNClassifier(BaseModel):
             else:
                 raise NotImplementedError("RNN types other than 'SimpleRNN', 'CuDNNGRU' and 'GRU' are not supported.")
         super(RNNClassifier, self).__init__(log_period=log_period,
-                                            layer_index_name_dict=layer_index_name_dict)
+                                            layer_index_name_dict=layer_index_name_dict,
+                                            log_path=log_path)
 
         embedding_size, rnn_size, dense_size = sizes
 

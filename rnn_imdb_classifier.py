@@ -22,6 +22,14 @@ METRICS = ['accuracy']
 EPOCHS = 10
 LOG_PERIOD = 100
 LAYER_INDEX_NAME_DICT = None  # defaults to what is implemented in the RNNClassifier class
+if "simplernn" in RNN_TYPE.lower():
+    LOG_PATH = "./log/rnn_imdb"
+elif "cudnngru" in RNN_TYPE.lower():
+    LOG_PATH = "./log/CuDNNGRU_imdb"
+elif "gru" in RNN_TYPE.lower():
+    LOG_PATH = "./log/GRU_imdb"
+else:
+    LOG_PATH = "./log"
 
 
 def load_imdb_dataset():
@@ -76,7 +84,7 @@ if __name__ == '__main__':
         test_dataset = test_dataset.take(10)
 
     LOGGER.info("Initializing GRU-RNN model.")
-    model = RNNClassifier(encoder.vocab_size, RNN_TYPE, LAYER_SIZES, LOG_PERIOD, LAYER_INDEX_NAME_DICT)
+    model = RNNClassifier(encoder.vocab_size, RNN_TYPE, LAYER_SIZES, LOG_PERIOD, LAYER_INDEX_NAME_DICT, LOG_PATH)
 
     LOGGER.info("Compiling the model.")
     model.compile(OPTIMIZER, LOSS, METRICS)
@@ -87,6 +95,8 @@ if __name__ == '__main__':
                         validation_steps=30)
     LOGGER.debug(f"history: {history}")
     LOGGER.debug(f"model: {model.summary()}")
+
+    # model.w_and_g_writer.close()  # TODO: close the writer in the model class itself
 
     LOGGER.info("Evaluating the model on IMDB REVIEWS testing dataset.")
     metrics = model.evaluate(test_dataset)

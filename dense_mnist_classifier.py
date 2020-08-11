@@ -22,6 +22,7 @@ METRICS = ['accuracy']
 EPOCHS = 5
 LOG_PERIOD = 100
 LAYER_INDEX_NAME_DICT = None  # defaults to what is implemented in the DenseClassifier class
+LOG_PATH = "./log/dense_mnist"
 
 if __name__ == '__main__':
     LOGGER.info("Import MNIST dataset.")
@@ -53,7 +54,7 @@ if __name__ == '__main__':
     ds_val = ds_val.batch(BATCH_SIZE)
 
     LOGGER.info("Initialize Dense classifier model.")
-    model = DenseClassifier(image_shape, HIDDEN_SIZE, NUM_CLASSES, LOG_PERIOD, LAYER_INDEX_NAME_DICT)
+    model = DenseClassifier(image_shape, HIDDEN_SIZE, NUM_CLASSES, LOG_PERIOD, LAYER_INDEX_NAME_DICT, LOG_PATH)
 
     LOGGER.info("Compile model.")
     model.compile(OPTIMIZER, LOSS, METRICS)
@@ -61,6 +62,8 @@ if __name__ == '__main__':
     LOGGER.info("Train model on training data.")
     history = model.fit(ds_train, epochs=EPOCHS, validation_data=ds_test)
     LOGGER.debug(f"model: {model.summary()}")
+
+    # model.w_and_g_writer.close()  # TODO: close the writer in the model class itself
 
     LOGGER.info("Evaluate model on validation data")
     metrics = model.evaluate(ds_val)
