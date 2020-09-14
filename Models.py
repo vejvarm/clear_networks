@@ -1,10 +1,14 @@
 # TODO: global extreme normalization
 # TODO: saving weights and gradients structures to files
+# TODO: plotting in something else than tensorboard
 import os
 
+from collections import defaultdict
 from typing import Tuple, Dict, Optional
 
 import tensorflow as tf
+
+from matplotlib import pyplot as plt
 
 from tensorflow.python.distribute import parameter_server_strategy
 from tensorflow.python.eager import backprop
@@ -37,6 +41,9 @@ class BaseModel(Model):
         if self.log_period:
             self.w_and_g_summary = tf.summary.create_file_writer(log_path)
             # self.w_and_g_writer = tf.io.TFRecordWriter(os.path.join(log_path, "wg.proto"))
+
+        self.figs = defaultdict(plt.figure)
+        plt.ion()
 
     def train_step(self, data):
         """The logic for one training step.
@@ -71,6 +78,8 @@ class BaseModel(Model):
         trainable_variables = self.trainable_variables
         gradients = tape.gradient(loss, trainable_variables)
 
+#        self._plot_gs(gradients)
+
         # TODO: save weights and gradients to files
         if self.log_period:
             tf.cond(tf.cast(step % self.log_period, tf.bool),
@@ -84,6 +93,20 @@ class BaseModel(Model):
 
         self.compiled_metrics.update_state(y, y_pred, sample_weight)
         return {m.name: m.result() for m in self.metrics}
+
+    def _plot_gs(self, gradients):
+
+        for i, (name, ptype) in self.layer_index_name_dict.items():
+            fig = self.figs[i]
+
+            # draw figures
+            if ptype == "w":
+                plt.pcolormesh(gradients[i])
+            elif ptype == "b":
+                plt.pcolormesh(tf.expand_dims(gradients[i], 1))
+
+            # redraw the figure:
+            fig.canvas.draw()
 
     def _log_w_and_g(self, weights_list, gradients_list, step):
         """
